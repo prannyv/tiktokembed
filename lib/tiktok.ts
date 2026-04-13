@@ -12,6 +12,41 @@ export interface TikTokVideoData {
 const cache = new Map<string, { data: TikTokVideoData; timestamp: number }>();
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
+/**
+ * Short TikTok URLs (vt.tiktok.com, vm.tiktok.com) redirect to the full
+ * canonical URL. Follow the redirect chain to resolve it.
+ */
+export async function resolveShortUrl(shortPath: string): Promise<string | null> {
+  const shortDomains = ['vt.tiktok.com', 'vm.tiktok.com', 'www.tiktok.com'];
+
+  for (const domain of shortDomains) {
+    try {
+      const res = await fetch(`https://${domain}/${shortPath}`, {
+        method: 'HEAD',
+        redirect: 'follow',
+        headers: { 'User-Agent': randomUserAgent() },
+      });
+
+      const finalUrl = res.url;
+      if (finalUrl && finalUrl.includes('tiktok.com/') && finalUrl.includes('/video/')) {
+        return finalUrl;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Returns true if the path looks like a standard TikTok video path
+ * (e.g. @user/video/123), false if it's likely a short code.
+ */
+export function isCanonicalPath(pathSegments: string[]): boolean {
+  return pathSegments.length >= 1 && pathSegments[0].startsWith('@');
+}
+
 export async function getTikTokVideoData(tiktokUrl: string): Promise<TikTokVideoData> {
   const now = Date.now();
   const cached = cache.get(tiktokUrl);

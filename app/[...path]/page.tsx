@@ -1,13 +1,26 @@
 import { Metadata } from 'next';
-import { getTikTokVideoData } from '@/lib/tiktok';
+import { getTikTokVideoData, isCanonicalPath, resolveShortUrl } from '@/lib/tiktok';
 
 type Props = {
   params: Promise<{ path: string[] }>;
 };
 
+async function buildTikTokUrl(path: string[]): Promise<string> {
+  if (isCanonicalPath(path)) {
+    return `https://www.tiktok.com/${path.join('/')}`;
+  }
+
+  // Looks like a short code (e.g. "ZSHgVB7GK") — resolve the redirect
+  const resolved = await resolveShortUrl(path.join('/'));
+  if (resolved) return resolved;
+
+  // Fallback: try as a normal tiktok.com path anyway
+  return `https://www.tiktok.com/${path.join('/')}`;
+}
+
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { path } = await params;
-  const tiktokUrl = `https://www.tiktok.com/${path.join('/')}`;
+  const tiktokUrl = await buildTikTokUrl(path);
 
   try {
     const data = await getTikTokVideoData(tiktokUrl);
@@ -49,7 +62,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function TikTokPage({ params }: Props) {
   const { path } = await params;
-  const tiktokUrl = `https://www.tiktok.com/${path.join('/')}`;
+  const tiktokUrl = await buildTikTokUrl(path);
 
   let data;
   let error: string | null = null;
