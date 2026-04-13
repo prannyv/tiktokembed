@@ -47,10 +47,21 @@ export function isCanonicalPath(pathSegments: string[]): boolean {
   return pathSegments.length >= 1 && pathSegments[0].startsWith('@');
 }
 
+/**
+ * Returns true if a downloadAddr URL has passed its &expire= timestamp.
+ * Useful for detecting stale cached URLs when a browser opens the page later.
+ */
+export function isVideoUrlExpired(videoUrl: string): boolean {
+  const match = videoUrl.match(/[?&]expire=(\d+)/);
+  if (!match) return false;
+  return Date.now() / 1000 > parseInt(match[1], 10);
+}
+
 export async function getTikTokVideoData(tiktokUrl: string): Promise<TikTokVideoData> {
   const now = Date.now();
   const cached = cache.get(tiktokUrl);
-  if (cached && now - cached.timestamp < CACHE_TTL_MS) {
+  // Invalidate cache early if the stored video URL has already expired
+  if (cached && now - cached.timestamp < CACHE_TTL_MS && !isVideoUrlExpired(cached.data.videoUrl)) {
     return cached.data;
   }
 

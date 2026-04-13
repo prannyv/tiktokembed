@@ -1,5 +1,5 @@
 import { Metadata } from 'next';
-import { getTikTokVideoData, isCanonicalPath, resolveShortUrl } from '@/lib/tiktok';
+import { getTikTokVideoData, isCanonicalPath, resolveShortUrl, isVideoUrlExpired } from '@/lib/tiktok';
 
 type Props = {
   params: Promise<{ path: string[] }>;
@@ -29,6 +29,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       ? [
           {
             url: data.videoUrl,
+            secureUrl: data.videoUrl, // og:video:secure_url — required by iMessage even when already HTTPS
             type: 'video/mp4' as const,
             width: data.width,
             height: data.height,
@@ -42,9 +43,16 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
         title: data.title,
         description: `${data.author} on TikTok`,
         type: 'video.other',
+        siteName: 'TikTok Embed',
+        url: tiktokUrl,
         videos: ogVideos,
         images: data.thumbnailUrl ? [{ url: data.thumbnailUrl }] : undefined,
       },
+      // Explicit fallback for og:video:secure_url via metadata.other in case
+      // Next.js doesn't emit it from the videos array above
+      other: data.videoUrl
+        ? { 'og:video:secure_url': data.videoUrl }
+        : undefined,
       twitter: {
         card: 'player',
         title: data.title,
@@ -89,10 +97,12 @@ export default async function TikTokPage({ params }: Props) {
     );
   }
 
+  const videoExpired = data.videoUrl ? isVideoUrlExpired(data.videoUrl) : false;
+
   return (
     <main className="flex flex-col items-center justify-center min-h-screen px-4 py-8">
       <div className="w-full max-w-sm space-y-4">
-        {data.videoUrl ? (
+        {data.videoUrl && !videoExpired ? (
           <video
             src={data.videoUrl}
             poster={data.thumbnailUrl || undefined}
@@ -103,29 +113,40 @@ export default async function TikTokPage({ params }: Props) {
             style={{ maxHeight: '80vh', objectFit: 'contain' }}
           />
         ) : data.thumbnailUrl ? (
-          // Fallback when no direct video URL — show thumbnail + link
-          <div className="relative rounded-2xl overflow-hidden shadow-2xl shadow-black/60">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={data.thumbnailUrl}
-              alt={data.title}
-              className="w-full"
-            />
-            <div className="absolute inset-0 flex items-center justify-center bg-black/30">
-              <a
-                href={tiktokUrl}
-                className="w-16 h-16 rounded-full bg-white/90 flex items-center justify-center shadow-lg hover:bg-white transition-colors"
-                aria-label="Open on TikTok"
-              >
-                <svg
-                  className="w-7 h-7 text-black ml-1"
-                  fill="currentColor"
-                  viewBox="0 0 24 24"
+          // No direct video URL, or URL has expired — show thumbnail + link
+          <div className="space-y-3">
+            <div className="relative rounded-2xl overflow-hidden shadow-2xl shadow-black/60">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={data.thumbnailUrl}
+                alt={data.title}
+                className="w-full"
+              />
+              <div className="absolute inset-0 flex items-center justify-center bg-black/30">
+                <a
+                  href={tiktokUrl}
+                  className="w-16 h-16 rounded-full bg-white/90 flex items-center justify-center shadow-lg hover:bg-white transition-colors"
+                  aria-label="Open on TikTok"
                 >
-                  <path d="M8 5v14l11-7z" />
-                </svg>
-              </a>
+                  <svg
+                    className="w-7 h-7 text-black ml-1"
+                    fill="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path d="M8 5v14l11-7z" />
+                  </svg>
+                </a>
+              </div>
             </div>
+            {videoExpired && (
+              <p className="text-xs text-center text-yellow-500/80">
+                Video link expired.{' '}
+                <a href={tiktokUrl} className="underline hover:text-yellow-400">
+                  Open on TikTok
+                </a>{' '}
+                or refresh to get a new link.
+              </p>
+            )}
           </div>
         ) : null}
 
