@@ -1,5 +1,9 @@
 import { Metadata } from 'next';
-import { getTikTokVideoData, isCanonicalPath, resolveShortUrl, isVideoUrlExpired } from '@/lib/tiktok';
+import { getTikTokVideoData, isCanonicalPath, resolveShortUrl } from '@/lib/tiktok';
+
+// Always render fresh so iMessage's crawler gets a non-stale page.
+// The underlying tikwm fetch is still cached via Next.js Data Cache (revalidate: 600).
+export const dynamic = 'force-dynamic';
 
 type Props = {
   params: Promise<{ path: string[] }>;
@@ -97,56 +101,45 @@ export default async function TikTokPage({ params }: Props) {
     );
   }
 
-  const videoExpired = data.videoUrl ? isVideoUrlExpired(data.videoUrl) : false;
-
   return (
     <main className="flex flex-col items-center justify-center min-h-screen px-4 py-8">
       <div className="w-full max-w-sm space-y-4">
-        {data.videoUrl && !videoExpired ? (
+        {data.videoUrl ? (
           <video
             src={data.videoUrl}
             poster={data.thumbnailUrl || undefined}
             controls
             autoPlay
+            muted
             playsInline
+            loop
             className="w-full rounded-2xl shadow-2xl shadow-black/60"
             style={{ maxHeight: '80vh', objectFit: 'contain' }}
           />
         ) : data.thumbnailUrl ? (
-          // No direct video URL, or URL has expired — show thumbnail + link
-          <div className="space-y-3">
-            <div className="relative rounded-2xl overflow-hidden shadow-2xl shadow-black/60">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={data.thumbnailUrl}
-                alt={data.title}
-                className="w-full"
-              />
-              <div className="absolute inset-0 flex items-center justify-center bg-black/30">
-                <a
-                  href={tiktokUrl}
-                  className="w-16 h-16 rounded-full bg-white/90 flex items-center justify-center shadow-lg hover:bg-white transition-colors"
-                  aria-label="Open on TikTok"
+          // Fallback when tikwm returned no play URL
+          <div className="relative rounded-2xl overflow-hidden shadow-2xl shadow-black/60">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={data.thumbnailUrl}
+              alt={data.title}
+              className="w-full"
+            />
+            <div className="absolute inset-0 flex items-center justify-center bg-black/30">
+              <a
+                href={tiktokUrl}
+                className="w-16 h-16 rounded-full bg-white/90 flex items-center justify-center shadow-lg hover:bg-white transition-colors"
+                aria-label="Open on TikTok"
+              >
+                <svg
+                  className="w-7 h-7 text-black ml-1"
+                  fill="currentColor"
+                  viewBox="0 0 24 24"
                 >
-                  <svg
-                    className="w-7 h-7 text-black ml-1"
-                    fill="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path d="M8 5v14l11-7z" />
-                  </svg>
-                </a>
-              </div>
+                  <path d="M8 5v14l11-7z" />
+                </svg>
+              </a>
             </div>
-            {videoExpired && (
-              <p className="text-xs text-center text-yellow-500/80">
-                Video link expired.{' '}
-                <a href={tiktokUrl} className="underline hover:text-yellow-400">
-                  Open on TikTok
-                </a>{' '}
-                or refresh to get a new link.
-              </p>
-            )}
           </div>
         ) : null}
 
