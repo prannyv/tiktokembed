@@ -1,10 +1,20 @@
 export interface TikTokVideoData {
+  id: string;
   title: string;
   author: string;
   videoUrl: string;
   thumbnailUrl: string;
   width: number;
   height: number;
+}
+
+/**
+ * Extract the numeric video ID from a TikTok URL.
+ * e.g. "https://www.tiktok.com/@user/video/7550389730706345271" → "7550389730706345271"
+ */
+export function extractVideoId(tiktokUrl: string): string {
+  const match = tiktokUrl.match(/\/video\/(\d+)/);
+  return match?.[1] ?? '';
 }
 
 /**
@@ -79,13 +89,16 @@ export async function getTikTokVideoData(tiktokUrl: string): Promise<TikTokVideo
 
   const d = json.data;
   const videoUrl: string = d.play || '';
-  const thumbnailUrl: string = d.origin_cover || d.cover || '';
+  // Prefer JPEG cover over WebP origin_cover — iMessage doesn't reliably preview WebP
+  const thumbnailUrl: string = d.cover || d.origin_cover || '';
+  const id: string = d.id || extractVideoId(tiktokUrl);
 
   if (!videoUrl) {
     throw new Error('tikwm response missing play URL');
   }
 
   return {
+    id,
     title: d.title || 'TikTok Video',
     author: d.author?.nickname || d.author?.unique_id || 'Unknown',
     videoUrl,

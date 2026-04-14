@@ -1,4 +1,5 @@
 import { Metadata } from 'next';
+import { headers } from 'next/headers';
 import { getTikTokVideoData, isCanonicalPath, resolveShortUrl } from '@/lib/tiktok';
 
 // Always render fresh so iMessage's crawler gets a non-stale page.
@@ -14,26 +15,38 @@ async function buildTikTokUrl(path: string[]): Promise<string> {
     return `https://www.tiktok.com/${path.join('/')}`;
   }
 
-  // Looks like a short code (e.g. "ZSHgVB7GK") — resolve the redirect
   const resolved = await resolveShortUrl(path.join('/'));
   if (resolved) return resolved;
 
-  // Fallback: try as a normal tiktok.com path anyway
   return `https://www.tiktok.com/${path.join('/')}`;
+}
+
+async function getBaseUrl(): Promise<string> {
+  const h = await headers();
+  const host = h.get('host') || 'tiktokembed.vercel.app';
+  const proto = h.get('x-forwarded-proto') || 'https';
+  return `${proto}://${host}`;
 }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { path } = await params;
   const tiktokUrl = await buildTikTokUrl(path);
+  const baseUrl = await getBaseUrl();
 
   try {
     const data = await getTikTokVideoData(tiktokUrl);
 
-    const ogVideos = data.videoUrl
+    // Point og:video at our own proxy route — TikTok's CDN returns 504 on HEAD
+    // requests which breaks iMessage's link preview crawler
+    const proxyVideoUrl = data.id
+      ? `${baseUrl}/api/video/${data.id}`
+      : undefined;
+
+    const ogVideos = proxyVideoUrl
       ? [
           {
-            url: data.videoUrl,
-            secureUrl: data.videoUrl, // og:video:secure_url — required by iMessage even when already HTTPS
+            url: proxyVideoUrl,
+            secureUrl: proxyVideoUrl,
             type: 'video/mp4' as const,
             width: data.width,
             height: data.height,
@@ -48,14 +61,12 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
         description: `${data.author} on TikTok`,
         type: 'video.other',
         siteName: 'TikTok Embed',
-        url: tiktokUrl,
+        url: `${baseUrl}/${path.join('/')}`,
         videos: ogVideos,
         images: data.thumbnailUrl ? [{ url: data.thumbnailUrl }] : undefined,
       },
-      // Explicit fallback for og:video:secure_url via metadata.other in case
-      // Next.js doesn't emit it from the videos array above
-      other: data.videoUrl
-        ? { 'og:video:secure_url': data.videoUrl }
+      other: proxyVideoUrl
+        ? { 'og:video:secure_url': proxyVideoUrl }
         : undefined,
       twitter: {
         card: 'player',
@@ -101,6 +112,8 @@ export default async function TikTokPage({ params }: Props) {
     );
   }
 
+  // Browser visitors get the direct TikTok CDN URL (works for GET requests)
+  // The proxy URL is only needed in og:video tags for crawler HEAD requests
   return (
     <main className="flex flex-col items-center justify-center min-h-screen px-4 py-8">
       <div className="w-full max-w-sm space-y-4">
@@ -117,7 +130,6 @@ export default async function TikTokPage({ params }: Props) {
             style={{ maxHeight: '80vh', objectFit: 'contain' }}
           />
         ) : data.thumbnailUrl ? (
-          // Fallback when tikwm returned no play URL
           <div className="relative rounded-2xl overflow-hidden shadow-2xl shadow-black/60">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
