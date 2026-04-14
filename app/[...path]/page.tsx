@@ -1,10 +1,12 @@
 import { Metadata } from 'next';
-import { headers } from 'next/headers';
 import { getTikTokVideoData, isCanonicalPath, resolveShortUrl } from '@/lib/tiktok';
 
-// Always render fresh so iMessage's crawler gets a non-stale page.
-// The underlying tikwm fetch is still cached via Next.js Data Cache (revalidate: 600).
-export const dynamic = 'force-dynamic';
+// Let Next.js ISR handle caching — the page is generated once and served
+// from the edge CDN. The tikwm fetch uses revalidate: 600, so after 10 min
+// the next request triggers a background regeneration. The /api/warm route
+// can prime the cache ahead of time.
+
+const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL || 'https://tiktokembed.vercel.app';
 
 type Props = {
   params: Promise<{ path: string[] }>;
@@ -21,17 +23,9 @@ async function buildTikTokUrl(path: string[]): Promise<string> {
   return `https://www.tiktok.com/${path.join('/')}`;
 }
 
-async function getBaseUrl(): Promise<string> {
-  const h = await headers();
-  const host = h.get('host') || 'tiktokembed.vercel.app';
-  const proto = h.get('x-forwarded-proto') || 'https';
-  return `${proto}://${host}`;
-}
-
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { path } = await params;
   const tiktokUrl = await buildTikTokUrl(path);
-  const baseUrl = await getBaseUrl();
 
   try {
     const data = await getTikTokVideoData(tiktokUrl);
@@ -39,7 +33,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     // Point og:video at our own proxy route — TikTok's CDN returns 504 on HEAD
     // requests which breaks iMessage's link preview crawler
     const proxyVideoUrl = data.id
-      ? `${baseUrl}/api/video/${data.id}`
+      ? `${BASE_URL}/api/video/${data.id}`
       : undefined;
 
     const ogVideos = proxyVideoUrl
@@ -61,7 +55,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
         description: `${data.author} on TikTok`,
         type: 'video.other',
         siteName: 'TikTok Embed',
-        url: `${baseUrl}/${path.join('/')}`,
+        url: `${BASE_URL}/${path.join('/')}`,
         videos: ogVideos,
         images: data.thumbnailUrl ? [{ url: data.thumbnailUrl }] : undefined,
       },
