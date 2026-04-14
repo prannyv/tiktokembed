@@ -6,8 +6,6 @@ import { getTikTokVideoData, isCanonicalPath, resolveShortUrl } from '@/lib/tikt
 // the next request triggers a background regeneration. The /api/warm route
 // can prime the cache ahead of time.
 
-const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL || 'https://tiktokembed.vercel.app';
-
 type Props = {
   params: Promise<{ path: string[] }>;
 };
@@ -30,17 +28,11 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   try {
     const data = await getTikTokVideoData(tiktokUrl);
 
-    // Point og:video at our own proxy route — TikTok's CDN returns 504 on HEAD
-    // requests which breaks iMessage's link preview crawler
-    const proxyVideoUrl = data.id
-      ? `${BASE_URL}/api/video/${data.id}`
-      : undefined;
-
-    const ogVideos = proxyVideoUrl
+    const ogVideos = data.videoUrl
       ? [
           {
-            url: proxyVideoUrl,
-            secureUrl: proxyVideoUrl,
+            url: data.videoUrl,
+            secureUrl: data.videoUrl,
             type: 'video/mp4' as const,
             width: data.width,
             height: data.height,
@@ -55,13 +47,9 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
         description: `${data.author} on TikTok`,
         type: 'video.other',
         siteName: 'TikTok Embed',
-        url: `${BASE_URL}/${path.join('/')}`,
         videos: ogVideos,
         images: data.thumbnailUrl ? [{ url: data.thumbnailUrl }] : undefined,
       },
-      other: proxyVideoUrl
-        ? { 'og:video:secure_url': proxyVideoUrl }
-        : undefined,
       twitter: {
         card: 'player',
         title: data.title,
