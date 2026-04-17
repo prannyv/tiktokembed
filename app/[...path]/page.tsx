@@ -21,6 +21,8 @@ async function buildTikTokUrl(path: string[]): Promise<string> {
   return `https://www.tiktok.com/${path.join('/')}`;
 }
 
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://tiktokembed.vercel.app';
+
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { path } = await params;
   const tiktokUrl = await buildTikTokUrl(path);
@@ -28,11 +30,15 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   try {
     const data = await getTikTokVideoData(tiktokUrl);
 
+    // Point og:video at our proxy so iMessage's HEAD request succeeds
+    // (TikTok CDN returns 504 on HEAD, breaking auto-play)
+    const proxyVideoUrl = `${SITE_URL}/api/video/${data.id}`;
+
     const ogVideos = data.videoUrl
       ? [
           {
-            url: data.videoUrl,
-            secureUrl: data.videoUrl,
+            url: proxyVideoUrl,
+            secureUrl: proxyVideoUrl,
             type: 'video/mp4' as const,
             width: data.width,
             height: data.height,
@@ -101,7 +107,7 @@ export default async function TikTokPage({ params }: Props) {
       <div className="w-full max-w-sm space-y-4">
         {data.videoUrl ? (
           <video
-            src={data.videoUrl}
+            src={data.hdVideoUrl || data.videoUrl}
             poster={data.thumbnailUrl || undefined}
             controls
             autoPlay

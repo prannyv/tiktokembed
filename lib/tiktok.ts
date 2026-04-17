@@ -3,6 +3,7 @@ export interface TikTokVideoData {
   title: string;
   author: string;
   videoUrl: string;
+  hdVideoUrl: string;
   thumbnailUrl: string;
   width: number;
   height: number;
@@ -66,7 +67,7 @@ type TikwmResponse = { code: number; msg: string; data: any };
  * instances — so a /api/warm call populates it for the catch-all route too.
  */
 export async function getTikTokVideoData(tiktokUrl: string): Promise<TikTokVideoData> {
-  const apiUrl = `https://www.tikwm.com/api/?url=${encodeURIComponent(tiktokUrl)}`;
+  const apiUrl = `https://www.tikwm.com/api/?url=${encodeURIComponent(tiktokUrl)}&hd=1`;
 
   const res = await fetch(apiUrl, {
     headers: {
@@ -89,6 +90,7 @@ export async function getTikTokVideoData(tiktokUrl: string): Promise<TikTokVideo
 
   const d = json.data;
   const videoUrl: string = d.play || '';
+  const hdVideoUrl: string = d.hdplay || d.play || '';
   // Prefer JPEG cover over WebP origin_cover — iMessage doesn't reliably preview WebP
   const thumbnailUrl: string = d.cover || d.origin_cover || '';
   const id: string = d.id || extractVideoId(tiktokUrl);
@@ -102,6 +104,7 @@ export async function getTikTokVideoData(tiktokUrl: string): Promise<TikTokVideo
     title: d.title || 'TikTok Video',
     author: d.author?.nickname || d.author?.unique_id || 'Unknown',
     videoUrl,
+    hdVideoUrl,
     thumbnailUrl,
     width: d.width || 576,
     height: d.height || 1024,

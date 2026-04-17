@@ -41,7 +41,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
   responseHeaders.set('Content-Type', 'video/mp4');
   responseHeaders.set('Accept-Ranges', 'bytes');
   responseHeaders.set('Access-Control-Allow-Origin', '*');
-  responseHeaders.set('Cache-Control', 'public, max-age=600, s-maxage=600');
+  responseHeaders.set('Cache-Control', 'public, max-age=60, s-maxage=600, stale-while-revalidate=300');
 
   const contentLength = upstream.headers.get('content-length');
   if (contentLength) responseHeaders.set('Content-Length', contentLength);
@@ -59,17 +59,37 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
  * HEAD — returns correct headers without streaming the body.
  * Critical because TikTok CDN returns 504 on HEAD requests,
  * but iMessage's crawler uses HEAD to validate og:video URLs.
+ * We fetch the play URL and do a HEAD/Range probe to get Content-Length,
+ * which helps iMessage decide whether to auto-play the video.
  */
-export async function HEAD() {
-  return new NextResponse(null, {
-    status: 200,
-    headers: {
-      'Content-Type': 'video/mp4',
-      'Accept-Ranges': 'bytes',
-      'Access-Control-Allow-Origin': '*',
-      'Cache-Control': 'public, max-age=600, s-maxage=600',
-    },
-  });
+export async function HEAD(_req: NextRequest, { params }: RouteParams) {
+  const { id } = await params;
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'video/mp4',
+    'Accept-Ranges': 'bytes',
+    'Access-Control-Allow-Origin': '*',
+    'Cache-Control': 'public, max-age=60, s-maxage=600, stale-while-revalidate=300',
+  };
+
+  const playUrl = await getPlayUrl(id);
+  if (playUrl) {
+    try {
+      const probe = await fetch(playUrl, {
+        method: 'HEAD',
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        },
+      });
+      const cl = probe.headers.get('content-length');
+      if (cl) headers['Content-Length'] = cl;
+    } catch {
+      // TikTok CDN may 504 on HEAD — that's fine, we still return 200
+    }
+  }
+
+  return new NextResponse(null, { status: 200, headers });
 }
 
 async function getPlayUrl(videoId: string): Promise<string | null> {
