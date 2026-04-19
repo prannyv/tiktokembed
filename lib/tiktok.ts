@@ -89,11 +89,11 @@ export async function getTikTokVideoData(tiktokUrl: string): Promise<TikTokVideo
   }
 
   const d = json.data;
-  const videoUrl: string = d.play || '';
+  const id: string = d.id || extractVideoId(tiktokUrl);
+  const videoUrl: string = id ? `https://tiktokembed.vercel.app/api/video/${id}` : (d.play || '');
   const hdVideoUrl: string = d.hdplay || d.play || '';
   // Prefer JPEG cover over WebP origin_cover — iMessage doesn't reliably preview WebP
   const thumbnailUrl: string = d.cover || d.origin_cover || '';
-  const id: string = d.id || extractVideoId(tiktokUrl);
 
   if (!videoUrl) {
     throw new Error('tikwm response missing play URL');
