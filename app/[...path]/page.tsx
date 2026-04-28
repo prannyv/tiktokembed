@@ -25,6 +25,8 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://tiktokembed.vercel
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { path } = await params;
+  const videoId = extractVideoIdFromPath(path);
+  const cachedVideoUrl = await getCachedVideoUrl(videoId);
   const tiktokUrl = await buildTikTokUrl(path);
 
   try {
@@ -37,8 +39,8 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     const ogVideos = data.videoUrl
       ? [
           {
-            url: proxyVideoUrl,
-            secureUrl: proxyVideoUrl,
+            url: cachedVideoUrl ?? proxyVideoUrl,
+            secureUrl: cachedVideoUrl ?? proxyVideoUrl,
             type: 'video/mp4' as const,
             width: data.width,
             height: data.height,
@@ -68,6 +70,45 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       title: 'TikTok Video',
       description: 'Could not load this video.',
     };
+  }
+}
+
+function extractVideoIdFromPath(path: string[]): string {
+  const numericSegments = path.flatMap((segment) => segment.match(/\d+/g) ?? []);
+  return numericSegments.at(-1) ?? '';
+}
+
+async function getCachedVideoUrl(videoId: string): Promise<string | null> {
+  if (!videoId) return null;
+
+  const accountId = process.env.CF_ACCOUNT_ID;
+  const namespace = process.env.CF_KV_NAMESPACE;
+  const token = process.env.CF_API_TOKEN;
+
+  if (!accountId || !namespace || !token) {
+    return null;
+  }
+
+  try {
+    const key = `videos:${videoId}`;
+    const res = await fetch(
+      `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces/${namespace}/values/${encodeURIComponent(key)}`,
+      {
+        cache: 'no-store',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
+
+    if (!res.ok) {
+      return null;
+    }
+
+    const value = await res.text();
+    return value && value !== 'pending' ? value : null;
+  } catch {
+    return null;
   }
 }
 

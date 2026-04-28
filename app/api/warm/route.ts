@@ -1,69 +1,200 @@
-import { after } from 'next/server';
-import { NextRequest, NextResponse } from 'next/server';
-import { getTikTokVideoData, isCanonicalPath, resolveShortUrl, extractVideoId } from '@/lib/tiktok';
+import { S3Client } from '@aws-sdk/client-s3';
+import { Upload } from '@aws-sdk/lib-storage';
+import { after, NextRequest, NextResponse } from 'next/server';
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://tiktokembed.vercel.app';
+export const runtime = 'nodejs';
+
+type CobaltResponse = {
+  status?: string;
+  url?: string;
+  text?: string;
+  error?: string;
+};
+
+const PENDING_TTL_SECONDS = 60;
+const WARMED_TTL_SECONDS = 48 * 60 * 60;
 
 export async function GET(req: NextRequest) {
-  const rawUrl = req.nextUrl.searchParams.get('url');
-  if (!rawUrl) {
+  const tiktokUrl = req.nextUrl.searchParams.get('url');
+  if (!tiktokUrl) {
     return NextResponse.json({ error: 'Missing url param' }, { status: 400 });
   }
 
-  try {
-    let tiktokUrl: string;
+  after(async () => {
+    await warmVideo(tiktokUrl);
+  });
 
-    const isFullUrl = rawUrl.startsWith('http');
-    if (isFullUrl) {
-      tiktokUrl = rawUrl;
-    } else {
-      const segments = rawUrl.replace(/^\//, '').split('/');
-      if (isCanonicalPath(segments)) {
-        tiktokUrl = `https://www.tiktok.com/${segments.join('/')}`;
-      } else {
-        const resolved = await resolveShortUrl(segments.join('/'));
-        tiktokUrl = resolved ?? `https://www.tiktok.com/${segments.join('/')}`;
-      }
+  return NextResponse.json({ success: true }, { status: 200 });
+}
+
+async function warmVideo(tiktokUrl: string) {
+  try {
+    const videoId = extractVideoId(tiktokUrl);
+    if (!videoId) {
+      console.error('[/api/warm] could not extract video ID', { tiktokUrl });
+      return;
     }
 
-    // Prime the Next.js Data Cache so the catch-all route gets a cache hit
-    const data = await getTikTokVideoData(tiktokUrl);
+    const kvKey = `videos:${videoId}`;
+    const existingValue = await getKvValue(kvKey);
 
-    // Background: prime the ISR page cache and video proxy CDN cache.
-    // Runs after the response is sent so the shortcut gets a fast reply.
-    after(async () => {
-      const videoId = data.id || extractVideoId(tiktokUrl);
-      if (!videoId) return;
+    if (existingValue === 'pending') {
+      console.log('[/api/warm] already pending', { videoId });
+      return;
+    }
 
-      const fetches: Promise<unknown>[] = [];
+    if (existingValue) {
+      console.log('[/api/warm] already warmed', { videoId });
+      return;
+    }
 
-      // Prime ISR page cache by hitting the page URL
-      const pagePath = tiktokUrl.replace('https://www.tiktok.com/', '');
-      fetches.push(
-        fetch(`${SITE_URL}/${pagePath}`, {
-          method: 'GET',
-          headers: { 'User-Agent': 'TikTokEmbed-Warmup/1.0' },
-        }).catch(() => {})
-      );
+    await putKvValue(kvKey, 'pending', PENDING_TTL_SECONDS);
 
-      // Prime the video proxy CDN cache with a small range request
-      fetches.push(
-        fetch(`${SITE_URL}/api/video/${videoId}`, {
-          method: 'GET',
-          headers: {
-            'User-Agent': 'TikTokEmbed-Warmup/1.0',
-            Range: 'bytes=0-1',
-          },
-        }).catch(() => {})
-      );
-
-      await Promise.allSettled(fetches);
+    console.log('[/api/warm] cobalt request started', {
+      videoId,
+      timestamp: new Date().toISOString(),
     });
 
-    return NextResponse.json({ success: true });
-  } catch (e) {
-    const message = e instanceof Error ? e.message : 'Unknown error';
-    console.error('[/api/warm]', message);
-    return NextResponse.json({ success: false, error: message }, { status: 200 });
+    const cobaltResponse = await fetch(requiredEnv('COBALT_URL'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({ url: tiktokUrl }),
+    });
+
+    const cobaltJson = (await cobaltResponse.json().catch(() => null)) as CobaltResponse | null;
+    if (
+      !cobaltResponse.ok ||
+      !cobaltJson?.url ||
+      (cobaltJson.status !== 'tunnel' && cobaltJson.status !== 'redirect')
+    ) {
+      console.error('[/api/warm] cobalt did not return a video URL', {
+        videoId,
+        statusCode: cobaltResponse.status,
+        response: cobaltJson,
+      });
+      return;
+    }
+
+    const videoResponse = await fetch(cobaltJson.url);
+    console.log('[/api/warm] cobalt stream started', {
+      videoId,
+      timestamp: new Date().toISOString(),
+    });
+
+    if (!videoResponse.ok || !videoResponse.body) {
+      console.error('[/api/warm] cobalt video fetch failed', {
+        videoId,
+        statusCode: videoResponse.status,
+      });
+      return;
+    }
+
+    await uploadVideoToR2(videoId, videoResponse.body);
+    console.log('[/api/warm] R2 upload completed', {
+      videoId,
+      timestamp: new Date().toISOString(),
+    });
+
+    const publicUrl = `https://${requiredEnv('CF_R2_PUBLIC_URL')}/videos/${videoId}.mp4`;
+    await putKvValue(kvKey, publicUrl, WARMED_TTL_SECONDS);
+    console.log('[/api/warm] KV write completed', {
+      videoId,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('[/api/warm] background job failed', error);
   }
+}
+
+function extractVideoId(tiktokUrl: string): string {
+  try {
+    const url = new URL(tiktokUrl);
+    const numericSegments = url.pathname.match(/\d+/g);
+    return numericSegments?.at(-1) ?? '';
+  } catch {
+    const numericSegments = tiktokUrl.match(/\d+/g);
+    return numericSegments?.at(-1) ?? '';
+  }
+}
+
+async function getKvValue(key: string): Promise<string | null> {
+  const res = await fetch(kvUrl(key), {
+    headers: {
+      Authorization: `Bearer ${requiredEnv('CF_API_TOKEN')}`,
+    },
+  });
+
+  if (res.status === 404) {
+    return null;
+  }
+
+  if (!res.ok) {
+    throw new Error(`KV read failed: ${res.status} ${await res.text()}`);
+  }
+
+  return res.text();
+}
+
+async function putKvValue(key: string, value: string, expirationTtl: number) {
+  const res = await fetch(kvUrl(key, expirationTtl), {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${requiredEnv('CF_API_TOKEN')}`,
+      'Content-Type': 'text/plain',
+    },
+    body: value,
+  });
+
+  if (!res.ok) {
+    throw new Error(`KV write failed: ${res.status} ${await res.text()}`);
+  }
+}
+
+function kvUrl(key: string, expirationTtl?: number): string {
+  const accountId = requiredEnv('CF_ACCOUNT_ID');
+  const namespace = requiredEnv('CF_KV_NAMESPACE');
+  const url = new URL(
+    `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces/${namespace}/values/${encodeURIComponent(key)}`
+  );
+
+  if (expirationTtl) {
+    url.searchParams.set('expiration_ttl', String(expirationTtl));
+  }
+
+  return url.toString();
+}
+
+async function uploadVideoToR2(videoId: string, body: ReadableStream<Uint8Array>) {
+  const client = new S3Client({
+    region: 'auto',
+    endpoint: `https://${requiredEnv('CF_ACCOUNT_ID')}.r2.cloudflarestorage.com`,
+    credentials: {
+      accessKeyId: requiredEnv('CF_R2_ACCESS_KEY_ID'),
+      secretAccessKey: requiredEnv('CF_R2_SECRET_ACCESS_KEY'),
+    },
+  });
+
+  const upload = new Upload({
+    client,
+    params: {
+      Bucket: requiredEnv('CF_R2_BUCKET'),
+      Key: `videos/${videoId}.mp4`,
+      ContentType: 'video/mp4',
+      Body: body,
+    },
+  });
+
+  await upload.done();
+}
+
+function requiredEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`Missing required env var: ${name}`);
+  }
+
+  return value;
 }
