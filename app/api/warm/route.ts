@@ -1,6 +1,6 @@
 import { S3Client } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
-import { after, NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 
 export const runtime = 'nodejs';
 
@@ -20,9 +20,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Missing url param' }, { status: 400 });
   }
 
-  after(async () => {
-    await warmVideo(tiktokUrl);
-  });
+  await warmVideo(tiktokUrl);
 
   return NextResponse.json({ success: true }, { status: 200 });
 }
@@ -105,7 +103,7 @@ async function warmVideo(tiktokUrl: string) {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    console.error('[/api/warm] background job failed', error);
+    console.error('[/api/warm] warm job failed', error);
   }
 }
 
