@@ -98,7 +98,8 @@ async function warmVideo(tiktokUrl: string) {
       timestamp: new Date().toISOString(),
     });
 
-    const publicUrl = `https://${requiredEnv('CF_R2_PUBLIC_URL')}/videos/${videoId}.mp4`;
+    const r2PublicUrl = requiredEnv('CF_R2_PUBLIC_URL').replace(/\/$/, '');
+    const publicUrl = `${r2PublicUrl}/videos/${videoId}.mp4`;
     await putKvValue(kvKey, publicUrl, WARMED_TTL_SECONDS);
     console.log('[/api/warm] KV write completed', {
       videoId,
