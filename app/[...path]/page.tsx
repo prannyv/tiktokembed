@@ -21,12 +21,16 @@ async function buildTikTokUrl(path: string[]): Promise<string> {
   return `https://www.tiktok.com/${path.join('/')}`;
 }
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://tiktokembed.vercel.app';
+const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL || 'https://tiktokembed.vercel.app').replace(
+  /\/$/,
+  ''
+);
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { path } = await params;
   const videoId = extractVideoIdFromPath(path);
   const cachedVideoUrl = await getCachedVideoUrl(videoId);
+  const embedUrl = buildEmbedUrl(path, videoId);
   const tiktokUrl = await buildTikTokUrl(path);
 
   try {
@@ -55,6 +59,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
         description: `${data.author} on TikTok`,
         type: 'video.other',
         siteName: 'TikTok Embed',
+        url: embedUrl,
         videos: ogVideos,
         images: data.thumbnailUrl ? [{ url: data.thumbnailUrl }] : undefined,
       },
@@ -76,6 +81,11 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 function extractVideoIdFromPath(path: string[]): string {
   const numericSegments = path.flatMap((segment) => segment.match(/\d+/g) ?? []);
   return numericSegments.at(-1) ?? '';
+}
+
+function buildEmbedUrl(path: string[], videoId: string): string {
+  const cacheKey = videoId ? `?v=${videoId}` : '';
+  return `${SITE_URL}/${path.join('/')}${cacheKey}`;
 }
 
 async function getCachedVideoUrl(videoId: string): Promise<string | null> {

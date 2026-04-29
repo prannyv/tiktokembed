@@ -13,6 +13,10 @@ type CobaltResponse = {
 
 const PENDING_TTL_SECONDS = 60;
 const WARMED_TTL_SECONDS = 48 * 60 * 60;
+const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL || 'https://tiktokembed.vercel.app').replace(
+  /\/$/,
+  ''
+);
 
 export async function GET(req: NextRequest) {
   const tiktokUrl = req.nextUrl.searchParams.get('url');
@@ -22,9 +26,13 @@ export async function GET(req: NextRequest) {
 
   console.log('[/api/warm] COBALT_URL =', process.env.COBALT_URL);
 
+  const videoId = extractVideoId(tiktokUrl);
   await warmVideo(tiktokUrl);
 
-  return NextResponse.json({ success: true }, { status: 200 });
+  return NextResponse.json(
+    { success: true, embedUrl: videoId ? buildEmbedUrl(tiktokUrl, videoId) : null },
+    { status: 200 }
+  );
 }
 
 async function warmVideo(tiktokUrl: string) {
@@ -118,6 +126,16 @@ function extractVideoId(tiktokUrl: string): string {
   } catch {
     const numericSegments = tiktokUrl.match(/\d+/g);
     return numericSegments?.at(-1) ?? '';
+  }
+}
+
+function buildEmbedUrl(tiktokUrl: string, videoId: string): string {
+  try {
+    const url = new URL(tiktokUrl);
+    return `${SITE_URL}${url.pathname}?v=${videoId}`;
+  } catch {
+    const path = tiktokUrl.startsWith('/') ? tiktokUrl : `/${tiktokUrl}`;
+    return `${SITE_URL}${path.split('?')[0]}?v=${videoId}`;
   }
 }
 
