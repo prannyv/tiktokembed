@@ -1,6 +1,6 @@
 import { S3Client } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
-import { NextRequest, NextResponse } from 'next/server';
+import { after, NextRequest, NextResponse } from 'next/server';
 
 export const runtime = 'nodejs';
 
@@ -37,12 +37,13 @@ export async function GET(req: NextRequest) {
 
   const resolvedUrl = await resolveUrl(tiktokUrl);
   const videoId = extractVideoId(resolvedUrl);
-  await warmVideo(tiktokUrl, resolvedUrl, videoId);
+  const url = videoId ? buildCanonicalUrl(resolvedUrl, videoId) : null;
 
-  return NextResponse.json(
-    { success: true, embedUrl: videoId ? buildEmbedUrl(resolvedUrl, videoId) : null },
-    { status: 200 }
-  );
+  after(async () => {
+    await warmVideo(tiktokUrl, resolvedUrl, videoId);
+  });
+
+  return NextResponse.json({ success: true, url }, { status: 200 });
 }
 
 async function warmVideo(originalUrl: string, resolvedUrl: string, videoId: string) {
@@ -136,7 +137,7 @@ async function warmVideo(originalUrl: string, resolvedUrl: string, videoId: stri
 async function resolveUrl(rawUrl: string): Promise<string> {
   const platform = detectPlatform(rawUrl);
 
-  if (platform !== 'tiktok' || !isTikTokShortLink(rawUrl)) {
+  if (platform !== 'tiktok' || (!isTikTokShortLink(rawUrl) && hasTikTokVideoId(rawUrl))) {
     return rawUrl;
   }
 
@@ -201,13 +202,23 @@ function isTikTokShortLink(rawUrl: string): boolean {
   }
 }
 
-function buildEmbedUrl(tiktokUrl: string, videoId: string): string {
+function hasTikTokVideoId(rawUrl: string): boolean {
+  return /\/video\/\d{15,25}/.test(rawUrl);
+}
+
+function buildCanonicalUrl(sourceUrl: string, videoId: string): string {
+  const platform = detectPlatform(sourceUrl);
+
+  if (platform === 'instagram') {
+    return `${SITE_URL}/reel/${videoId}`;
+  }
+
   try {
-    const url = new URL(tiktokUrl);
-    return `${SITE_URL}${url.pathname}?v=${videoId}`;
+    const url = new URL(sourceUrl);
+    return `${SITE_URL}${url.pathname}`;
   } catch {
-    const path = tiktokUrl.startsWith('/') ? tiktokUrl : `/${tiktokUrl}`;
-    return `${SITE_URL}${path.split('?')[0]}?v=${videoId}`;
+    const path = sourceUrl.startsWith('/') ? sourceUrl : `/${sourceUrl}`;
+    return `${SITE_URL}${path.split('?')[0]}`;
   }
 }
 

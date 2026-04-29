@@ -48,6 +48,8 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       };
     }
 
+    console.log('[catch-all] og:video url:', cachedVideoUrl);
+
     return {
       title: 'Instagram Reel',
       description: 'Instagram Reel',
@@ -78,17 +80,23 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const tiktokUrl = await buildTikTokUrl(path);
 
   try {
+    if (!cachedVideoUrl) {
+      console.log('[catch-all] using tikwm fallback:', { tiktokUrl, videoId });
+    }
+
     const data = await getTikTokVideoData(tiktokUrl);
 
     // Point og:video at our proxy so iMessage's HEAD request succeeds
     // (TikTok CDN returns 504 on HEAD, breaking auto-play)
     const proxyVideoUrl = `${SITE_URL}/api/video/${data.id}`;
+    const videoUrl = cachedVideoUrl ?? proxyVideoUrl;
+    console.log('[catch-all] og:video url:', videoUrl);
 
     const ogVideos = data.videoUrl
       ? [
           {
-            url: cachedVideoUrl ?? proxyVideoUrl,
-            secureUrl: cachedVideoUrl ?? proxyVideoUrl,
+            url: videoUrl,
+            secureUrl: videoUrl,
             type: 'video/mp4' as const,
             width: data.width,
             height: data.height,
@@ -163,6 +171,7 @@ async function getCachedVideoUrl(videoId: string): Promise<string | null> {
     }
 
     const value = await res.text();
+    console.log('[catch-all] KV result:', value);
     return value && value !== 'pending' ? value : null;
   } catch {
     return null;
@@ -218,6 +227,10 @@ export default async function TikTokPage({ params }: Props) {
   let error: string | null = null;
 
   try {
+    if (!cachedVideoUrl) {
+      console.log('[catch-all] using tikwm fallback:', { tiktokUrl, videoId });
+    }
+
     data = await getTikTokVideoData(tiktokUrl);
   } catch (e) {
     error = e instanceof Error ? e.message : 'Unknown error';
