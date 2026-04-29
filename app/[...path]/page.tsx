@@ -1,4 +1,5 @@
 import { Metadata } from 'next';
+import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { extractVideoId, getTikTokVideoData, isCanonicalPath, resolveShortUrl } from '@/lib/tiktok';
 
@@ -12,6 +13,7 @@ type Props = {
 };
 
 type SourceSite = 'tiktok' | 'instagram';
+type RequestSource = 'imessage' | 'web' | 'crawler';
 
 async function buildTikTokUrl(path: string[]): Promise<string> {
   if (isCanonicalPath(path)) {
@@ -34,10 +36,11 @@ const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL || 'https://tiktokembed.verce
 );
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
+  const requestSource = await getRequestSource();
   const { path } = await params;
   const sourceSite = detectSourceSite(path);
   const videoId = extractVideoIdFromPath(path);
-  const cachedVideoUrl = await getCachedVideoUrl(videoId);
+  const cachedVideoUrl = await getCachedVideoUrl(videoId, requestSource);
   const embedUrl = buildEmbedUrl(path, videoId);
 
   if (sourceSite === 'instagram') {
@@ -48,7 +51,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       };
     }
 
-    console.log('[catch-all] og:video url:', cachedVideoUrl);
+    console.log('[catch-all] og:video url:', { source: requestSource, videoUrl: cachedVideoUrl });
 
     return {
       title: 'Instagram Reel',
@@ -81,7 +84,11 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
   try {
     if (!cachedVideoUrl) {
-      console.log('[catch-all] using tikwm fallback:', { tiktokUrl, videoId });
+      console.log('[catch-all] using tikwm fallback:', {
+        source: requestSource,
+        tiktokUrl,
+        videoId,
+      });
     }
 
     const data = await getTikTokVideoData(tiktokUrl);
@@ -90,7 +97,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     // (TikTok CDN returns 504 on HEAD, breaking auto-play)
     const proxyVideoUrl = `${SITE_URL}/api/video/${data.id}`;
     const videoUrl = cachedVideoUrl ?? proxyVideoUrl;
-    console.log('[catch-all] og:video url:', videoUrl);
+    console.log('[catch-all] og:video url:', { source: requestSource, videoUrl });
 
     const ogVideos = data.videoUrl
       ? [
@@ -143,7 +150,10 @@ function buildEmbedUrl(path: string[], videoId: string): string {
   return `${SITE_URL}/${path.join('/')}${cacheKey}`;
 }
 
-async function getCachedVideoUrl(videoId: string): Promise<string | null> {
+async function getCachedVideoUrl(
+  videoId: string,
+  requestSource: RequestSource
+): Promise<string | null> {
   if (!videoId) return null;
 
   const accountId = process.env.CF_ACCOUNT_ID;
@@ -171,7 +181,7 @@ async function getCachedVideoUrl(videoId: string): Promise<string | null> {
     }
 
     const value = await res.text();
-    console.log('[catch-all] KV result:', value);
+    console.log('[catch-all] KV result:', { source: requestSource, value });
     return value && value !== 'pending' ? value : null;
   } catch {
     return null;
@@ -179,10 +189,11 @@ async function getCachedVideoUrl(videoId: string): Promise<string | null> {
 }
 
 export default async function TikTokPage({ params }: Props) {
+  const requestSource = await getRequestSource();
   const { path } = await params;
   const sourceSite = detectSourceSite(path);
   const videoId = extractVideoIdFromPath(path);
-  const cachedVideoUrl = await getCachedVideoUrl(videoId);
+  const cachedVideoUrl = await getCachedVideoUrl(videoId, requestSource);
 
   if (sourceSite === 'instagram') {
     const instagramUrl = buildInstagramUrl(path);
@@ -228,7 +239,11 @@ export default async function TikTokPage({ params }: Props) {
 
   try {
     if (!cachedVideoUrl) {
-      console.log('[catch-all] using tikwm fallback:', { tiktokUrl, videoId });
+      console.log('[catch-all] using tikwm fallback:', {
+        source: requestSource,
+        tiktokUrl,
+        videoId,
+      });
     }
 
     data = await getTikTokVideoData(tiktokUrl);
@@ -311,4 +326,26 @@ export default async function TikTokPage({ params }: Props) {
       </div>
     </main>
   );
+}
+
+async function getRequestSource(): Promise<RequestSource> {
+  const headerList = await headers();
+  const userAgent = headerList.get('user-agent')?.toLowerCase() ?? '';
+
+  if (userAgent.includes('messages') || userAgent.includes('applebot')) {
+    return 'imessage';
+  }
+
+  if (
+    userAgent.includes('facebookexternalhit') ||
+    userAgent.includes('twitterbot') ||
+    userAgent.includes('slackbot') ||
+    userAgent.includes('discordbot') ||
+    userAgent.includes('telegrambot') ||
+    userAgent.includes('bot')
+  ) {
+    return 'crawler';
+  }
+
+  return 'web';
 }
