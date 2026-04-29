@@ -20,6 +20,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Missing url param' }, { status: 400 });
   }
 
+  console.log('[/api/warm] COBALT_URL =', process.env.COBALT_URL);
+
   await warmVideo(tiktokUrl);
 
   return NextResponse.json({ success: true }, { status: 200 });
