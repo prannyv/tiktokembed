@@ -114,6 +114,8 @@ async function getCachedVideoUrl(videoId: string): Promise<string | null> {
 
 export default async function TikTokPage({ params }: Props) {
   const { path } = await params;
+  const videoId = extractVideoIdFromPath(path);
+  const cachedVideoUrl = await getCachedVideoUrl(videoId);
   const tiktokUrl = await buildTikTokUrl(path);
 
   let data;
@@ -146,9 +148,9 @@ export default async function TikTokPage({ params }: Props) {
   return (
     <main className="flex flex-col items-center justify-center min-h-screen px-4 py-8">
       <div className="w-full max-w-sm space-y-4">
-        {data.videoUrl ? (
+        {cachedVideoUrl || data.videoUrl ? (
           <video
-            src={data.hdVideoUrl || data.videoUrl}
+            src={cachedVideoUrl ?? data.hdVideoUrl ?? data.videoUrl}
             poster={data.thumbnailUrl || undefined}
             controls
             autoPlay
