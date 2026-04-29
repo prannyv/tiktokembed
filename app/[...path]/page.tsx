@@ -1,5 +1,6 @@
 import { Metadata } from 'next';
-import { getTikTokVideoData, isCanonicalPath, resolveShortUrl } from '@/lib/tiktok';
+import { redirect } from 'next/navigation';
+import { extractVideoId, getTikTokVideoData, isCanonicalPath, resolveShortUrl } from '@/lib/tiktok';
 
 // Let Next.js ISR handle caching — the page is generated once and served
 // from the edge CDN. The tikwm fetch uses revalidate: 600, so after 10 min
@@ -9,6 +10,8 @@ import { getTikTokVideoData, isCanonicalPath, resolveShortUrl } from '@/lib/tikt
 type Props = {
   params: Promise<{ path: string[] }>;
 };
+
+type SourceSite = 'tiktok' | 'instagram';
 
 async function buildTikTokUrl(path: string[]): Promise<string> {
   if (isCanonicalPath(path)) {
@@ -21,6 +24,10 @@ async function buildTikTokUrl(path: string[]): Promise<string> {
   return `https://www.tiktok.com/${path.join('/')}`;
 }
 
+function buildInstagramUrl(path: string[]): string {
+  return `https://www.instagram.com/${path.join('/')}`;
+}
+
 const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL || 'https://tiktokembed.vercel.app').replace(
   /\/$/,
   ''
@@ -28,9 +35,46 @@ const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL || 'https://tiktokembed.verce
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { path } = await params;
+  const sourceSite = detectSourceSite(path);
   const videoId = extractVideoIdFromPath(path);
   const cachedVideoUrl = await getCachedVideoUrl(videoId);
   const embedUrl = buildEmbedUrl(path, videoId);
+
+  if (sourceSite === 'instagram') {
+    if (!cachedVideoUrl) {
+      return {
+        title: 'Instagram Reel',
+        description: 'Open this reel on Instagram.',
+      };
+    }
+
+    return {
+      title: 'Instagram Reel',
+      description: 'Instagram Reel',
+      openGraph: {
+        title: 'Instagram Reel',
+        description: 'Instagram Reel',
+        type: 'video.other',
+        siteName: 'TikTok Embed',
+        url: embedUrl,
+        videos: [
+          {
+            url: cachedVideoUrl,
+            secureUrl: cachedVideoUrl,
+            type: 'video/mp4' as const,
+            width: 576,
+            height: 1024,
+          },
+        ],
+      },
+      twitter: {
+        card: 'player',
+        title: 'Instagram Reel',
+        description: 'Instagram Reel',
+      },
+    };
+  }
+
   const tiktokUrl = await buildTikTokUrl(path);
 
   try {
@@ -78,9 +122,12 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   }
 }
 
+function detectSourceSite(path: string[]): SourceSite {
+  return extractVideoIdFromPath(path) && path.includes('reel') ? 'instagram' : 'tiktok';
+}
+
 function extractVideoIdFromPath(path: string[]): string {
-  const numericSegments = path.flatMap((segment) => segment.match(/\d+/g) ?? []);
-  return numericSegments.at(-1) ?? '';
+  return extractVideoId(`/${path.join('/')}`);
 }
 
 function buildEmbedUrl(path: string[], videoId: string): string {
@@ -124,8 +171,47 @@ async function getCachedVideoUrl(videoId: string): Promise<string | null> {
 
 export default async function TikTokPage({ params }: Props) {
   const { path } = await params;
+  const sourceSite = detectSourceSite(path);
   const videoId = extractVideoIdFromPath(path);
   const cachedVideoUrl = await getCachedVideoUrl(videoId);
+
+  if (sourceSite === 'instagram') {
+    const instagramUrl = buildInstagramUrl(path);
+
+    if (!cachedVideoUrl) {
+      redirect(instagramUrl);
+    }
+
+    return (
+      <main className="flex flex-col items-center justify-center min-h-screen px-4 py-8">
+        <div className="w-full max-w-sm space-y-4">
+          <video
+            src={cachedVideoUrl}
+            controls
+            autoPlay
+            muted
+            playsInline
+            loop
+            className="w-full rounded-2xl shadow-2xl shadow-black/60"
+            style={{ maxHeight: '80vh', objectFit: 'contain' }}
+          />
+
+          <div className="space-y-1 px-1">
+            <p className="font-semibold text-white leading-snug line-clamp-2">Instagram Reel</p>
+            <p className="text-sm text-gray-400">Instagram</p>
+          </div>
+
+          <a
+            href={instagramUrl}
+            className="block w-full text-center py-3 rounded-xl bg-white/10 hover:bg-white/15 text-sm text-gray-300 transition-colors"
+          >
+            View on Instagram →
+          </a>
+        </div>
+      </main>
+    );
+  }
+
   const tiktokUrl = await buildTikTokUrl(path);
 
   let data;

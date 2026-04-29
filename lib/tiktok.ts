@@ -10,11 +10,12 @@ export interface TikTokVideoData {
 }
 
 /**
- * Extract the numeric video ID from a TikTok URL.
+ * Extract the video ID from a TikTok or Instagram Reel URL.
  * e.g. "https://www.tiktok.com/@user/video/7550389730706345271" → "7550389730706345271"
+ * e.g. "https://www.instagram.com/reel/DVRC2NxjDbD/" → "DVRC2NxjDbD"
  */
 export function extractVideoId(tiktokUrl: string): string {
-  const match = tiktokUrl.match(/\/video\/(\d+)/);
+  const match = tiktokUrl.match(/\/(?:video|reel)\/([A-Za-z0-9_-]+)/);
   return match?.[1] ?? '';
 }
 

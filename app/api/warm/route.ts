@@ -18,6 +18,15 @@ const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL || 'https://tiktokembed.verce
   ''
 );
 
+/*
+ * iOS Shortcut update for Instagram Reels:
+ * 1. After the existing TikTok domain replace steps, add matching Instagram steps.
+ * 2. Replace instagram.com with tiktokembed.vercel.app in the URL.
+ * 3. Strip query parameters before sending by using "Get URLs from" or text
+ *    manipulation to remove everything after "?".
+ * 4. Fire the same /api/warm?url=OriginalURL call with the clean Instagram URL.
+ * 5. Leave the rest of the shortcut, including the send message step, unchanged.
+ */
 export async function GET(req: NextRequest) {
   const tiktokUrl = req.nextUrl.searchParams.get('url');
   if (!tiktokUrl) {
@@ -26,20 +35,26 @@ export async function GET(req: NextRequest) {
 
   console.log('[/api/warm] COBALT_URL =', process.env.COBALT_URL);
 
-  const videoId = extractVideoId(tiktokUrl);
-  await warmVideo(tiktokUrl);
+  const resolvedUrl = await resolveUrl(tiktokUrl);
+  const videoId = extractVideoId(resolvedUrl);
+  await warmVideo(tiktokUrl, resolvedUrl, videoId);
 
   return NextResponse.json(
-    { success: true, embedUrl: videoId ? buildEmbedUrl(tiktokUrl, videoId) : null },
+    { success: true, embedUrl: videoId ? buildEmbedUrl(resolvedUrl, videoId) : null },
     { status: 200 }
   );
 }
 
-async function warmVideo(tiktokUrl: string) {
+async function warmVideo(originalUrl: string, resolvedUrl: string, videoId: string) {
   try {
-    const videoId = extractVideoId(tiktokUrl);
+    console.log('[/api/warm] resolved URL and video ID', {
+      originalUrl,
+      resolvedUrl,
+      videoId,
+    });
+
     if (!videoId) {
-      console.error('[/api/warm] could not extract video ID', { tiktokUrl });
+      console.error('[/api/warm] could not extract video ID', { originalUrl, resolvedUrl });
       return;
     }
 
@@ -69,7 +84,7 @@ async function warmVideo(tiktokUrl: string) {
         'Content-Type': 'application/json',
         Accept: 'application/json',
       },
-      body: JSON.stringify({ url: tiktokUrl }),
+      body: JSON.stringify({ url: resolvedUrl }),
     });
 
     const cobaltJson = (await cobaltResponse.json().catch(() => null)) as CobaltResponse | null;
@@ -118,14 +133,71 @@ async function warmVideo(tiktokUrl: string) {
   }
 }
 
-function extractVideoId(tiktokUrl: string): string {
+async function resolveUrl(rawUrl: string): Promise<string> {
+  const platform = detectPlatform(rawUrl);
+
+  if (platform !== 'tiktok' || !isTikTokShortLink(rawUrl)) {
+    return rawUrl;
+  }
+
   try {
-    const url = new URL(tiktokUrl);
-    const numericSegments = url.pathname.match(/\d+/g);
-    return numericSegments?.at(-1) ?? '';
+    const res = await fetch(rawUrl, {
+      method: 'HEAD',
+      redirect: 'follow',
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      },
+    });
+
+    return res.url || rawUrl;
+  } catch (error) {
+    console.error('[/api/warm] failed to resolve TikTok short URL', { rawUrl, error });
+    return rawUrl;
+  }
+}
+
+function extractVideoId(url: string): string {
+  const platform = detectPlatform(url);
+
+  if (platform === 'tiktok') {
+    const match = url.match(/\/video\/(\d{15,25})/);
+    return match?.[1] ?? '';
+  }
+
+  if (platform === 'instagram') {
+    const match = url.match(/\/reel\/([A-Za-z0-9_-]+)/);
+    return match?.[1] ?? '';
+  }
+
+  return '';
+}
+
+function detectPlatform(rawUrl: string): 'tiktok' | 'instagram' | 'unknown' {
+  try {
+    const hostname = new URL(rawUrl).hostname.toLowerCase();
+
+    if (hostname === 'tiktok.com' || hostname.endsWith('.tiktok.com')) {
+      return 'tiktok';
+    }
+
+    if (hostname === 'instagram.com' || hostname.endsWith('.instagram.com')) {
+      return 'instagram';
+    }
   } catch {
-    const numericSegments = tiktokUrl.match(/\d+/g);
-    return numericSegments?.at(-1) ?? '';
+    if (rawUrl.includes('tiktok.com')) return 'tiktok';
+    if (rawUrl.includes('instagram.com')) return 'instagram';
+  }
+
+  return 'unknown';
+}
+
+function isTikTokShortLink(rawUrl: string): boolean {
+  try {
+    const hostname = new URL(rawUrl).hostname.toLowerCase();
+    return hostname === 'vm.tiktok.com' || hostname === 'vt.tiktok.com';
+  } catch {
+    return rawUrl.includes('vm.tiktok.com') || rawUrl.includes('vt.tiktok.com');
   }
 }
 
