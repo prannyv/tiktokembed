@@ -23,9 +23,10 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
   const platform = detectPlatform(path);
   const videoId = extractVideoIdFromPath(path, platform);
   const originalUrl = buildOriginalUrl(path, platform);
+  const viewerUrl = buildViewerUrl(path);
   const cachedVideoUrl = await getCachedVideoUrl(videoId);
   const embedData = await getEmbedData(originalUrl, platform, cachedVideoUrl);
-  const html = buildHtml(embedData, originalUrl);
+  const html = buildHtml(embedData, viewerUrl);
 
   return new Response(html, {
     headers: {
@@ -75,7 +76,7 @@ async function getEmbedData(
   try {
     const data = await getTikTokVideoData(originalUrl);
     return {
-      videoUrl: cachedVideoUrl ?? data.hdVideoUrl ?? data.videoUrl,
+      videoUrl: cachedVideoUrl ?? data.videoUrl ?? data.hdVideoUrl,
       title: data.title || fallback.title,
       image: data.thumbnailUrl || '',
       width: data.width || fallback.width,
@@ -107,10 +108,14 @@ async function getCachedVideoUrl(videoId: string): Promise<string | null> {
     if (!res.ok) return null;
 
     const value = await res.text();
-    return value && value !== 'pending' && /^https?:\/\//.test(value) ? value : null;
+    return isValidVideoUrl(value) ? value : null;
   } catch {
     return null;
   }
+}
+
+function buildViewerUrl(path: string[]): string {
+  return `${SITE_URL}/view/${path.join('/')}`;
 }
 
 function buildHtml(data: EmbedData, redirectUrl: string): string {
@@ -135,4 +140,20 @@ function attr(value: string): string {
 
 function jsString(value: string): string {
   return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/</g, '\\u003c');
+}
+
+function isValidVideoUrl(value: string): boolean {
+  if (!value || value === 'pending') return false;
+
+  try {
+    const url = new URL(value);
+    return (
+      (url.protocol === 'https:' || url.protocol === 'http:') &&
+      url.hostname.includes('.') &&
+      url.hostname !== 'https' &&
+      url.pathname.endsWith('.mp4')
+    );
+  } catch {
+    return false;
+  }
 }
