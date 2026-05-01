@@ -1,6 +1,6 @@
 import { S3Client } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
-import { after, NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 
 export const runtime = 'nodejs';
 
@@ -39,9 +39,7 @@ export async function GET(req: NextRequest) {
   const videoId = extractVideoId(resolvedUrl);
   const url = videoId ? buildCanonicalUrl(resolvedUrl, videoId) : null;
 
-  after(async () => {
-    await warmVideo(tiktokUrl, resolvedUrl, videoId);
-  });
+  await warmVideo(tiktokUrl, resolvedUrl, videoId);
 
   return NextResponse.json({ success: true, url }, { status: 200 });
 }
