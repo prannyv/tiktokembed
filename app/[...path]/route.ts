@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server';
+import { fallbackMetadata, parseEmbedMetadata } from '@/lib/embed-metadata';
 import { getTikTokVideoData } from '@/lib/tiktok';
 
 type RouteParams = {
@@ -25,7 +26,8 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
   const originalUrl = buildOriginalUrl(path, platform);
   const viewerUrl = buildViewerUrl(path);
   const cachedVideoUrl = await getCachedVideoUrl(videoId);
-  const embedData = await getEmbedData(originalUrl, platform, cachedVideoUrl);
+  const metadata = await getCachedMetadata(videoId, platform);
+  const embedData = await getEmbedData(originalUrl, platform, cachedVideoUrl, metadata);
   const html = buildHtml(embedData, viewerUrl);
 
   return new Response(html, {
@@ -59,11 +61,12 @@ function buildOriginalUrl(path: string[], platform: 'instagram' | 'tiktok'): str
 async function getEmbedData(
   originalUrl: string,
   platform: 'instagram' | 'tiktok',
-  cachedVideoUrl: string | null
+  cachedVideoUrl: string | null,
+  metadata: { title: string; author: string }
 ): Promise<EmbedData> {
   const fallback: EmbedData = {
     videoUrl: cachedVideoUrl ?? '',
-    title: platform === 'instagram' ? 'Instagram Reel' : 'TikTok Video',
+    title: metadata.title,
     image: '',
     width: 576,
     height: 1024,
@@ -111,6 +114,35 @@ async function getCachedVideoUrl(videoId: string): Promise<string | null> {
     return isValidVideoUrl(value) ? value : null;
   } catch {
     return null;
+  }
+}
+
+async function getCachedMetadata(
+  videoId: string,
+  platform: 'instagram' | 'tiktok'
+): Promise<{ title: string; author: string }> {
+  if (!videoId) return fallbackMetadata(platform);
+
+  const accountId = process.env.CF_ACCOUNT_ID;
+  const namespace = process.env.CF_KV_NAMESPACE;
+  const token = process.env.CF_API_TOKEN;
+  if (!accountId || !namespace || !token) return fallbackMetadata(platform);
+
+  try {
+    const key = `metadata:${videoId}`;
+    const res = await fetch(
+      `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces/${namespace}/values/${encodeURIComponent(key)}`,
+      {
+        cache: 'no-store',
+        headers: { Authorization: `Bearer ${token}` },
+      }
+    );
+
+    if (!res.ok) return fallbackMetadata(platform);
+
+    return parseEmbedMetadata(await res.text()) ?? fallbackMetadata(platform);
+  } catch {
+    return fallbackMetadata(platform);
   }
 }
 

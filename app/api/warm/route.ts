@@ -1,12 +1,14 @@
 import { S3Client } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
 import { NextRequest, NextResponse } from 'next/server';
+import { buildEmbedMetadata } from '@/lib/embed-metadata';
 
 export const runtime = 'nodejs';
 
 type CobaltResponse = {
   status?: string;
   url?: string;
+  filename?: string;
   text?: string;
   error?: string;
 };
@@ -123,6 +125,17 @@ async function warmVideo(originalUrl: string, resolvedUrl: string, videoId: stri
     const r2PublicUrl = requiredEnv('CF_R2_PUBLIC_URL').replace(/\/$/, '');
     const publicUrl = `${r2PublicUrl}/videos/${videoId}.mp4`;
     await putKvValue(kvKey, publicUrl, WARMED_TTL_SECONDS);
+    await putKvValue(
+      `metadata:${videoId}`,
+      JSON.stringify(
+        await buildEmbedMetadata({
+          platform: detectPlatform(resolvedUrl),
+          sourceUrl: resolvedUrl,
+          filename: cobaltJson.filename,
+        })
+      ),
+      WARMED_TTL_SECONDS
+    );
     console.log('[/api/warm] KV write completed', {
       videoId,
       timestamp: new Date().toISOString(),

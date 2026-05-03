@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation';
+import { fallbackMetadata, parseEmbedMetadata } from '@/lib/embed-metadata';
 import { getTikTokVideoData } from '@/lib/tiktok';
 
 type Props = {
@@ -13,6 +14,7 @@ export default async function ViewerPage({ params }: Props) {
   const videoId = extractVideoIdFromPath(path, platform);
   const originalUrl = buildOriginalUrl(path, platform);
   const cachedVideoUrl = await getCachedVideoUrl(videoId);
+  const cachedMetadata = await getCachedMetadata(videoId, platform);
 
   if (platform === 'instagram') {
     if (!cachedVideoUrl) redirect(originalUrl);
@@ -20,8 +22,8 @@ export default async function ViewerPage({ params }: Props) {
     return (
       <VideoView
         videoUrl={cachedVideoUrl}
-        title="Instagram Reel"
-        author="Instagram"
+        title={cachedMetadata.title}
+        author={cachedMetadata.author}
         originalUrl={originalUrl}
         originalLabel="View on Instagram →"
       />
@@ -145,6 +147,32 @@ async function getCachedVideoUrl(videoId: string): Promise<string | null> {
     return isValidVideoUrl(value) ? value : null;
   } catch {
     return null;
+  }
+}
+
+async function getCachedMetadata(videoId: string, platform: Platform): Promise<{ title: string; author: string }> {
+  if (!videoId) return fallbackMetadata(platform);
+
+  const accountId = process.env.CF_ACCOUNT_ID;
+  const namespace = process.env.CF_KV_NAMESPACE;
+  const token = process.env.CF_API_TOKEN;
+  if (!accountId || !namespace || !token) return fallbackMetadata(platform);
+
+  try {
+    const key = `metadata:${videoId}`;
+    const res = await fetch(
+      `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces/${namespace}/values/${encodeURIComponent(key)}`,
+      {
+        cache: 'no-store',
+        headers: { Authorization: `Bearer ${token}` },
+      }
+    );
+
+    if (!res.ok) return fallbackMetadata(platform);
+
+    return parseEmbedMetadata(await res.text()) ?? fallbackMetadata(platform);
+  } catch {
+    return fallbackMetadata(platform);
   }
 }
 
